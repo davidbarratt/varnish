@@ -1,0 +1,7 @@
+version: '3'
+services:
+  cache:
+    build: ./
+    image: phototech/varnish
+    extra_hosts:
+      - "backend:127.0.0.1"
