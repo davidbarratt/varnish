@@ -15,7 +15,7 @@ vcl 4.0;
 import std;
 
 # Allow any local IP address to invalidate the cache.
-acl invalidators {
+acl local {
     "10.0.0.0"/8;
     "172.16.0.0"/12;
     "192.168.0.0"/16;
@@ -28,25 +28,29 @@ backend default {
 }
 
 sub vcl_hash {
+    # A different response is delivered based on the forwarded proto.
     if (req.http.X-Forwarded-Proto) {
       hash_data(req.http.X-Forwarded-Proto);
     }
+
+    # Cf-Visitor will be either `http` or `https`
+    # @see https://support.cloudflare.com/hc/en-us/articles/200170986-How-does-Cloudflare-handle-HTTP-Request-headers
     if (req.http.CF-Visitor) {
       hash_data(req.http.CF-Visitor);
     }
 }
 
 sub vcl_recv {
-    # Happens before we check if we have this in cache already.
-    #
-    # Typically you clean up the request here, removing cookies you don't need,
-    # rewriting the request, etc.
-
     if (req.http.Cookie) {
       # Remove has_js and Google Analytics __* cookies.
       set req.http.Cookie = regsuball(req.http.Cookie, "(^|;\s*)(_[_a-z]+|has_js)=[^;]*", "");
       # Remove a ";" prefix, if present.
       set req.http.Cookie = regsub(req.http.Cookie, "^;\s*", "");
+
+      # Remove WordPress cookies.
+      set req.http.Cookie = regsuball(req.http.Cookie, "wp-settings-\d+=[^;]+(; )?", "");
+      set req.http.Cookie = regsuball(req.http.Cookie, "wp-settings-time-\d+=[^;]+(; )?", "");
+      set req.http.Cookie = regsuball(req.http.Cookie, "wordpress_test_cookie=[^;]+(; )?", "");
 
       # Unset an empty Cookie header.
       if (req.http.Cookie == "") {
@@ -54,10 +58,10 @@ sub vcl_recv {
       }
     }
 
-    # Only allow BAN requests from IP addresses in the 'purge' ACL.
+    # Drupal: Purge By Purge-Cache-Tags
     if (req.method == "BAN") {
-      # Same ACL check as above:
-      if (!client.ip ~ invalidators) {
+      # Only allow BAN requests from local IP addresses.
+      if (!client.ip ~ local) {
         return (synth(403, "Not allowed."));
       }
 
@@ -69,31 +73,46 @@ sub vcl_recv {
         return (synth(403, "Purge-Cache-Tags header missing."));
       }
 
-    # Throw a synthetic page so the request won't go to the backend.
-    return (synth(200, "Banned"));
-  }
+      # Throw a synthetic page so the request won't go to the backend.
+      return (synth(200, "Banned"));
+    }
+
+    # WordPress: Purge by URL (or regex)
+    if (req.method == "PURGE") {
+      # Same ACL check as above:
+      if (!client.ip ~ local) {
+        return (synth(403, "Not allowed."));
+      }
+
+      if (req.http.X-Purge-Method == "regex") {
+        ban("req.url ~ " + req.url + " && req.http.host ~ " + req.http.host);
+        return (synth(200, "Purged"));
+      }
+
+      return (purge);
+    }
 }
 
 sub vcl_backend_response {
-    # Happens after we have read the response headers from the backend.
-    #
-    # Here you clean the response headers, removing silly Set-Cookie headers
-    # and other mistakes your backend does.
+  # 403 requests are not cached, so override the status for a moment.
   if (beresp.status == 403) {
     set beresp.http.X-Status = beresp.status;
     set beresp.status = 200;
   }
+  if (!bereq.uncacheable) {
+    set beresp.http.X-Cahce-Control = beresp.http.Cache-Control;
+    unset beresp.http.Cache-Control;
+  }
 }
 
 sub vcl_deliver {
-    # Happens when we have all the pieces we need, and are about to send the
-    # response to the client.
-    #
-    # You can do accounting or modifying the final object here.
+    # Reset the status of 403 requests.
     if (resp.http.X-Status) {
       set resp.status = std.integer(resp.http.X-Status, 403);
       unset resp.http.X-Status;
     }
+
+    # Add debugging information.
     if (obj.hits > 0) {
       set resp.http.X-Cache = "HIT";
       set resp.http.X-Cache-Hits = obj.hits;
