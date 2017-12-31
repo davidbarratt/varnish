@@ -1,5 +1,7 @@
 FROM debian:stretch
 
+EXPOSE 80
+
 RUN apt-get update && apt-get install -y \
 		varnish \
 	--no-install-recommends && rm -r /var/lib/apt/lists/*
