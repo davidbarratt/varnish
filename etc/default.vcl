@@ -44,13 +44,9 @@ sub vcl_recv {
     if (req.http.Cookie) {
       # Remove has_js and Google Analytics __* cookies.
       set req.http.Cookie = regsuball(req.http.Cookie, "(^|;\s*)(_[_a-z]+|has_js)=[^;]*", "");
+
       # Remove a ";" prefix, if present.
       set req.http.Cookie = regsub(req.http.Cookie, "^;\s*", "");
-
-      # Remove WordPress cookies.
-      set req.http.Cookie = regsuball(req.http.Cookie, "wp-settings-\d+=[^;]+(; )?", "");
-      set req.http.Cookie = regsuball(req.http.Cookie, "wp-settings-time-\d+=[^;]+(; )?", "");
-      set req.http.Cookie = regsuball(req.http.Cookie, "wordpress_test_cookie=[^;]+(; )?", "");
 
       # Unset an empty Cookie header.
       if (req.http.Cookie == "") {
