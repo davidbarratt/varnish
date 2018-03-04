@@ -58,7 +58,7 @@ sub vcl_recv {
       }
     }
 
-    # Drupal: Purge By Purge-Cache-Tags
+    # Drupal & API Platform: Purge By Cache-Tags
     if (req.method == "BAN") {
       # Only allow BAN requests from local IP addresses.
       if (!client.ip ~ local) {
@@ -68,6 +68,9 @@ sub vcl_recv {
       # Logic for the ban, using the X-Cache-Tags header.
       if (req.http.Purge-Cache-Tags) {
         ban("obj.http.Purge-Cache-Tags ~ " + req.http.Purge-Cache-Tags);
+      }
+      elseif (req.http.ApiPlatform-Ban-Regex) {
+        ban("obj.http.Cache-Tags ~ " + req.http.ApiPlatform-Ban-Regex);
       }
       else {
         return (synth(403, "Purge-Cache-Tags header missing."));
